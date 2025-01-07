@@ -21,7 +21,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/user', auth, async (req, res) => {
   try {
     const kudos = await Kudo.find({
-      $or: [{ from: req.user.id }, { to: req.user.id }],
+      $or: [{ from: req.user.userId }, { to: req.user.userId }],
     })
       .populate('from', 'name department')
       .populate('to', 'name department')
@@ -36,8 +36,20 @@ router.get('/user', auth, async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { to, message, category } = req.body;
+    
+    // Validate inputs
+    if (!to || !message || !category) {
+      return res.status(400).json({ message: 'Please provide all required fields' });
+    }
+
+    // Validate recipient exists
+    const recipient = await User.findById(to);
+    if (!recipient) {
+      return res.status(404).json({ message: 'Recipient not found' });
+    }
+
     const kudo = new Kudo({
-      from: req.user.id,
+      from: req.user.userId,  // Changed from req.user.id to req.user.userId
       to,
       message,
       category,
@@ -50,17 +62,18 @@ router.post('/', auth, async (req, res) => {
 
     res.status(201).json(kudo);
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error creating kudo:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
 // Get kudos statistics
 router.get('/stats', auth, async (req, res) => {
   try {
-    const kudosReceived = await Kudo.countDocuments({ to: req.user.id });
-    const kudosGiven = await Kudo.countDocuments({ from: req.user.id });
+    const kudosReceived = await Kudo.countDocuments({ to: req.user.userId });
+    const kudosGiven = await Kudo.countDocuments({ from: req.user.userId });
     const categoryStats = await Kudo.aggregate([
-      { $match: { to: req.user.id } },
+      { $match: { to: req.user.userId } },
       { $group: { _id: '$category', count: { $sum: 1 } } },
     ]);
 
@@ -82,11 +95,11 @@ router.post('/:id/like', auth, async (req, res) => {
       return res.status(404).json({ message: 'Kudo not found' });
     }
 
-    const likeIndex = kudo.likes.indexOf(req.user.id);
+    const likeIndex = kudo.likes.indexOf(req.user.userId);
     if (likeIndex > -1) {
       kudo.likes.splice(likeIndex, 1);
     } else {
-      kudo.likes.push(req.user.id);
+      kudo.likes.push(req.user.userId);
     }
 
     await kudo.save();
@@ -99,13 +112,10 @@ router.post('/:id/like', auth, async (req, res) => {
 // Get leaderboard
 router.get('/leaderboard', auth, async (req, res) => {
   try {
-    const pipeline = [
-      {
-        $group: {
-          _id: '$to',
-          score: { $sum: 1 },
-        },
-      },
+    const receivedStats = await Kudo.aggregate([
+      { $group: { _id: '$to', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
       {
         $lookup: {
           from: 'users',
@@ -114,42 +124,43 @@ router.get('/leaderboard', auth, async (req, res) => {
           as: 'user',
         },
       },
-      {
-        $unwind: '$user',
-      },
+      { $unwind: '$user' },
       {
         $project: {
-          _id: '$user._id',
+          _id: 1,
+          count: 1,
           name: '$user.name',
           department: '$user.department',
-          score: 1,
         },
       },
-      {
-        $sort: { score: -1 },
-      },
-      {
-        $limit: 10,
-      },
-    ];
+    ]);
 
-    const [received, given, trending] = await Promise.all([
-      Kudo.aggregate(pipeline),
-      Kudo.aggregate([
-        ...pipeline.slice(0, 1),
-        { $match: { createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } } },
-        ...pipeline.slice(1),
-      ]),
-      Kudo.aggregate([
-        { $match: { from: req.user.id } },
-        ...pipeline.slice(1),
-      ]),
+    const givenStats = await Kudo.aggregate([
+      { $group: { _id: '$from', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'user',
+        },
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          _id: 1,
+          count: 1,
+          name: '$user.name',
+          department: '$user.department',
+        },
+      },
     ]);
 
     res.json({
-      received,
-      given,
-      trending,
+      received: receivedStats,
+      given: givenStats,
     });
   } catch (err) {
     res.status(500).json({ message: 'Server error' });

@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const app = express();
-
+const usersRoutes = require('./routes/users');
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -19,7 +19,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/kudospot'
 // Routes
 const authRoutes = require('./routes/auth');
 const kudosRoutes = require('./routes/kudos');
-
+app.use('/api/users', usersRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/kudos', kudosRoutes);
 
