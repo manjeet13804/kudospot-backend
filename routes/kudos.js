@@ -128,7 +128,7 @@ router.get('/leaderboard', auth, async (req, res) => {
       {
         $project: {
           _id: 1,
-          count: 1,
+          score: '$count',  
           name: '$user.name',
           department: '$user.department',
         },
@@ -151,7 +151,39 @@ router.get('/leaderboard', auth, async (req, res) => {
       {
         $project: {
           _id: 1,
-          count: 1,
+          score: '$count',  
+          name: '$user.name',
+          department: '$user.department',
+        },
+      },
+    ]);
+
+    // Get trending stats (kudos received in the last 7 days)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const trendingStats = await Kudo.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: sevenDaysAgo }
+        }
+      },
+      { $group: { _id: '$to', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'user',
+        },
+      },
+      { $unwind: '$user' },
+      {
+        $project: {
+          _id: 1,
+          score: '$count',  
           name: '$user.name',
           department: '$user.department',
         },
@@ -161,9 +193,11 @@ router.get('/leaderboard', auth, async (req, res) => {
     res.json({
       received: receivedStats,
       given: givenStats,
+      trending: trendingStats
     });
   } catch (err) {
-    res.status(500).json({ message: 'Server error' });
+    console.error('Error getting leaderboard:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
